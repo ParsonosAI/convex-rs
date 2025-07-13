@@ -62,7 +62,8 @@ struct LocalQuery {
     id: QueryId,
     canonicalized_udf_path: CanonicalizedUdfPath,
     args: BTreeMap<String, Value>,
-    num_subscribers: usize, // TODO: remove
+    num_subscribers: usize,
+    next_subscriber_idx: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -115,9 +116,12 @@ impl LocalSyncState {
         let query_token = serialize_path_and_args(udf_path.clone(), args.clone());
 
         if let Some(existing_entry) = self.query_set.get_mut(&query_token) {
+            let subscriber_idx = existing_entry.next_subscriber_idx;
+            existing_entry.next_subscriber_idx += 1;
             existing_entry.num_subscribers += 1;
+
             let query_id = existing_entry.id;
-            let subscription = SubscriberId(query_id, existing_entry.num_subscribers - 1);
+            let subscription = SubscriberId(query_id, subscriber_idx);
             let prev = self.latest_results.subscribers.insert(subscription);
             assert!(prev.is_none(), "INTERNAL BUG: Subscriber ID already taken.");
             return (None, subscription);
@@ -147,6 +151,7 @@ impl LocalSyncState {
             canonicalized_udf_path,
             args,
             num_subscribers: 1,
+            next_subscriber_idx: 1,
         };
 
         self.query_set.insert(query_token.clone(), query);
@@ -174,8 +179,8 @@ impl LocalSyncState {
         };
 
         // Update local state
-        if local_query.num_subscribers > 1 {
-            local_query.num_subscribers -= 1;
+        local_query.num_subscribers -= 1;
+        if local_query.num_subscribers > 0 {
             return None;
         }
         self.query_set.remove(&query_token);
